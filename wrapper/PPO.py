@@ -23,10 +23,8 @@ def ppo_update(policy,
                file_name,
                save_dir,
                device,
-               opt_vars=None,
                reward_fn=None,
-               env_noise_std=0.0,
-               save_model=False):
+               env_noise_std=0.0,):
     """
      Single PPO update over rollout steps. The backbone of the learning process.
     """
@@ -70,17 +68,8 @@ def ppo_update(policy,
 
             evaluations = evaluate(evaluations, policy, eval_envs, obs_rms, args.env_noise_std, args.seed, device)
 
-            # Save the model periodically: every 0.1 of total num of iterations
-            if evaluations['reward'][-1] >= max(np.max(evaluations['reward'][:-1]), 1000) and save_model:
-                checkpoint_name = os.path.join(os.path.join(save_dir, "models"), f"{file_name}_{len(evaluations['reward'])}.pth")
-                solver.save_checkpoint(checkpoint_name, obs_rms=training_envs.obs_rms, opt_vars=opt_vars)
-
             np.save(os.path.join(os.path.join(save_dir, "learning_curves"), file_name), evaluations['reward'])
             np.save(os.path.join(os.path.join(save_dir, "costs"), file_name), evaluations['cost'])
-            np.save(os.path.join(os.path.join(save_dir, "time_steps"), file_name), evaluations['time_steps'])
-
-            with open(os.path.join(os.path.join(save_dir, "velocities"), f"{file_name}.json"), 'w') as json_file:
-                json.dump(evaluations['velocity'], json_file)
 
         total_steps += 1
 
@@ -99,10 +88,9 @@ def ppo_update(policy,
 
 def learn(policy, solver, training_envs, eval_envs, rollouts, args, file_name, save_dir, device, num_iter=int(1e6), warmup_steps=None):
     # Initialize the arrays necessary to track the training progress
-    evaluations = {'reward': [], 'cost': [], 'velocity': {'mean': [], 'max': []}, 'time_steps': []}
-    episode_rewards, max_eps_reward = deque(maxlen=10), -float('inf')
+    evaluations = {'reward': [], 'cost': [], 'velocity': {'mean': [], 'max': []}}
+    episode_rewards = deque(maxlen=10)
     total_steps = 0
-    # model_save_freq = int(0.1 * num_iter)
 
     # First evaluation
     obs_rms = get_vec_normalize(training_envs).obs_rms
@@ -122,20 +110,19 @@ def learn(policy, solver, training_envs, eval_envs, rollouts, args, file_name, s
 
         # Take a single parameter update on the policy using the rollout data
         policy, solver, rollouts, training_envs, eval_envs, total_steps, episode_rewards, evaluations = ppo_update(
-            policy,
-            solver,
-            training_envs,
-            eval_envs,
-            rollouts,
-            args,
-            total_steps,
-            episode_rewards,
-            evaluations,
-            file_name,
-            save_dir,
-            device,
-            env_noise_std=args.env_noise_std,
-            save_model=args.save_model)
+        policy,
+        solver,
+        training_envs,
+        eval_envs,
+        rollouts,
+        args,
+        total_steps,
+        episode_rewards,
+        evaluations,
+        file_name,
+        save_dir,
+        device,
+        env_noise_std=args.env_noise_std,)
 
         # Verbosity
         if len(episode_rewards) > 1:
@@ -147,3 +134,5 @@ def learn(policy, solver, training_envs, eval_envs, rollouts, args, file_name, s
                   f"FPS: {int(total_n_rollout_steps / (end - start))} "
                   f"Last 10 Training Episodes Reward: mean/median {np.mean(episode_rewards):.1f}/{np.median(episode_rewards):.1f}, "
                   f"max/min {np.max(episode_rewards):.1f}/{np.min(episode_rewards):.1f}")
+
+    return policy, None, eval_envs

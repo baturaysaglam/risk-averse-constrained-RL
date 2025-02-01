@@ -1,34 +1,12 @@
 import gym
-import safety_gymnasium
-import numpy as np
-import torch
 from gym.spaces.box import Box
-from gym.wrappers.clip_action import ClipAction
-from stable_baselines3.common.atari_wrappers import (ClipRewardEnv,
-                                                     EpisodicLifeEnv,
-                                                     FireResetEnv,
-                                                     MaxAndSkipEnv,
-                                                     NoopResetEnv, WarpFrame)
+import numpy as np
+import safety_gymnasium
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import (DummyVecEnv, SubprocVecEnv,
                                               VecEnvWrapper)
-from stable_baselines3.common.vec_env.vec_normalize import \
-    VecNormalize as VecNormalize_
-
-try:
-    import dmc2gym
-except ImportError:
-    pass
-
-try:
-    import roboschool
-except ImportError:
-    pass
-
-try:
-    import pybullet_envs
-except ImportError:
-    pass
+from stable_baselines3.common.vec_env.vec_normalize import VecNormalize as VecNormalize_
+import torch
 
 
 def make_env(env_id, seed, rank, allow_early_resets):
@@ -109,7 +87,6 @@ def get_vec_normalize(venv):
         return get_vec_normalize(venv.venv)
 
     return None
-
 
 
 # Checks whether done was caused my timit limits or not

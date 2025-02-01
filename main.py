@@ -1,4 +1,6 @@
 import argparse
+import json
+import os
 import random
 import yaml
 
@@ -9,7 +11,7 @@ import torch
 from model.model import Policy as PPOPolicy
 from solver.PPO import PPO
 from utils.env import make_vec_envs, get_vec_normalize
-from utils.experiment import get_save_dir, get_velocity_threshold
+from utils.experiment import get_save_dir, get_velocity_threshold, post_training_evaluation
 from utils.storage import RolloutStorage
 from utils.utils import DotDict
 from wrapper import RA_C_RL
@@ -24,15 +26,14 @@ if __name__ == "__main__":
     # Setup
     parser.add_argument("--solver", default="PPO", help='Solver algorithm', choices=['PPO'])
     parser.add_argument("--wrapper", default="RA_C_RL", help='Wrapper learning framework', choices=['PPO', 'RA_C_RL'])  # RA_C_RL stands for: Risk-Averse Constraint RL (ours)
-    parser.add_argument("--env", default="SafetyHalfCheetahVelocity-v1", help='OpenAI Gym environment name')
+    parser.add_argument("--env", default="SafetyHopperVelocity-v1", help='OpenAI Gym environment name')
     parser.add_argument("--eval_freq", default=1e3, metavar='N', type=int, help='Evaluation period in number of time steps (default: 1e3)')
-    parser.add_argument("--seed", default=0, type=int, help='Seed number for PyTorch, NumPy and OpenAI Gym (default: 0)')
-    parser.add_argument("--save_model", action='store_true', help='Save the best model yielding the highest evaluation reward')
+    parser.add_argument("--seed", default=4, type=int, help='Seed number for PyTorch, NumPy and OpenAI Gym (default: 0)')
 
     # Training duration - important because linear learning rate decay has huge impact on learning
     # Equals to 'num_iter' if given, or automatically computed at line 146
     parser.add_argument("--num_iter", default=None, type=float, metavar='N', help='Number of iterations (default: None)')
-    parser.add_argument("--max_time_steps", default=1e6, type=float, metavar='N', help='Maximum number of steps (default: 1e6)')
+    parser.add_argument("--max_time_steps", default=1500, type=float, metavar='N', help='Maximum number of steps (default: 1e6)')
 
     # RA-C-RL parameters: Dual and CV@R
     parser.add_argument('--beta', type=float, default=6, help='V@R risk level')
@@ -139,17 +140,26 @@ if __name__ == "__main__":
 
     warmup_steps = int(args.warmup_steps * num_iter) if args.warmup_steps is not None and args.wrapper == "RA_C_RL" else None
 
-    wrapper.learn(policy=policy,
-                  solver=solver,
-                  training_envs=envs,
-                  eval_envs=eval_envs,
-                  rollouts=rollouts,
-                  args=args,
-                  file_name=file_name,
-                  save_dir=save_dir,
-                  device=device,
-                  num_iter=num_iter,
-                  warmup_steps=warmup_steps)
+    policy, opt_vars, eval_envs = wrapper.learn(policy=policy,
+                                                solver=solver,
+                                                training_envs=envs,
+                                                eval_envs=eval_envs,
+                                                rollouts=rollouts,
+                                                args=args,
+                                                file_name=file_name,
+                                                save_dir=save_dir,
+                                                device=device,
+                                                num_iter=num_iter,
+                                                warmup_steps=warmup_steps)
+    
+    # Save the trained agent
+    checkpoint_name = os.path.join(os.path.join(save_dir, "models"), f"{file_name}.pth")
+    obs_rms = get_vec_normalize(envs[0]).obs_rms
+    solver.save_checkpoint(checkpoint_name, obs_rms=obs_rms, opt_vars=opt_vars)
+
+    # Post-training evaluation to check velocities of the trained agent
+    velocities = post_training_evaluation(policy, eval_envs, obs_rms, args.env_noise_std, args.seed, device, num_eval_eps=100)
+    np.save(os.path.join(os.path.join(save_dir, "velocities"), file_name), velocities, allow_pickle=True)
 
     envs[0].close()
     eval_envs[0].close()

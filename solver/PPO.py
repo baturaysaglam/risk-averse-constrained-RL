@@ -78,8 +78,8 @@ class PPO:
 
         # Add opt_vars if not None
         if opt_vars is not None:
-            checkpoint['lambda_var'] = opt_vars[0].item()  # Assuming opt_vars[0] is lambda_var
-            checkpoint['t_var'] = opt_vars[1].item()  # Assuming opt_vars[1] is t_var
+            checkpoint['lambda_var'] = opt_vars['lambda_var']
+            checkpoint['t_var'] = opt_vars['t_var']
 
         torch.save(checkpoint, file_name)
 
@@ -91,9 +91,6 @@ class PPO:
         # Load opt_vars if they exist in the checkpoint
         lambda_var = checkpoint.get('lambda_var', None)
         t_var = checkpoint.get('t_var', None)
-        opt_vars = (lambda_var, t_var) if lambda_var is not None and t_var is not None else None
+        opt_vars = {'lambda_var': lambda_var, 't_var': t_var} if lambda_var is not None and t_var is not None else None
 
         return checkpoint['obs_rms'], opt_vars
-
-
-

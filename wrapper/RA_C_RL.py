@@ -132,6 +132,7 @@ def risk_averse_reward(reward, vel, beta, t_var, lambda_var, c):
     reward = reward.to(vel.device)
 
     penalty = c + (t_var - 1 / beta * torch.max(torch.tensor(0), t_var + vel)) 
+
     scaled_penalty = lambda_var * penalty
 
     return reward + scaled_penalty
@@ -143,11 +144,10 @@ def learn(policy, solver, training_envs, eval_envs, rollouts, args, file_name, s
     training_envs, vel_threshold = training_envs
 
     # Initialize the arrays necessary to track the training progress
-    evaluations = {'reward': [], 'cost': [], 'velocity': {'mean': [], 'max': []}, 'time_steps': []}
+    evaluations = {'reward': [], 'cost': [], 'velocity': {'mean': [], 'max': []}}
     opt_vars = {'lambda_var': [], 't_var': []}
-    episode_rewards, max_eps_reward = deque(maxlen=10), -float('inf')
+    episode_rewards = deque(maxlen=10)
     total_steps = 0
-    model_save_freq = int(0.1 * num_iter)
 
     # First evaluation
     obs_rms = get_vec_normalize(training_envs).obs_rms
@@ -187,26 +187,24 @@ def learn(policy, solver, training_envs, eval_envs, rollouts, args, file_name, s
 
         # Take a single parameter update on the policy using the rollout data
         policy, solver, solver_rollouts, training_envs, eval_envs, total_steps, episode_rewards, evaluations = ppo_update(
-            policy,
-            solver,
-            training_envs,
-            eval_envs,
-            solver_rollouts,
-            args,
-            total_steps,
-            episode_rewards,
-            evaluations,
-            file_name,
-            save_dir,
-            device,
-            opt_vars=(lambda_var.detach(), t_var.detach()),
-            reward_fn=partial(risk_averse_reward,
-                              beta=args.beta,
-                              t_var=t_var.detach(),
-                              lambda_var=lambda_var.detach(),
-                              c=vel_threshold),
-            env_noise_std=args.env_noise_std,
-            save_model=args.save_model)
+        policy,
+        solver,
+        training_envs,
+        eval_envs,
+        solver_rollouts,
+        args,
+        total_steps,
+        episode_rewards,
+        evaluations,
+        file_name,
+        save_dir,
+        device,
+        reward_fn=partial(risk_averse_reward,
+                            beta=args.beta,
+                            t_var=t_var.detach(),
+                            lambda_var=lambda_var.detach(),
+                            c=vel_threshold),
+        env_noise_std=args.env_noise_std,)
 
         opt_var_rollouts = collect_data(policy, training_envs, opt_var_rollouts, args, reward_fn=partial(risk_averse_reward,
                                                                                                          beta=args.beta,
@@ -233,3 +231,5 @@ def learn(policy, solver, training_envs, eval_envs, rollouts, args, file_name, s
                   f"FPS: {int(total_n_rollout_steps / (end - start))} "
                   f"Last 10 Training Episodes Reward: mean/median {np.mean(episode_rewards):.1f}/{np.median(episode_rewards):.1f}, "
                   f"max/min {np.max(episode_rewards):.1f}/{np.min(episode_rewards):.1f}")
+            
+    return policy, opt_vars, eval_envs

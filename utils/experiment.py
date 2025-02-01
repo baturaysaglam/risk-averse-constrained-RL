@@ -4,8 +4,6 @@ import os
 import numpy as np
 import torch
 
-from utils.env import get_vec_normalize
-
 
 def get_velocity_threshold(env_name):
     velocity_map = {
@@ -19,7 +17,7 @@ def get_velocity_threshold(env_name):
     return velocity_map.get(env_name, None)
 
 
-def evaluate(evaluations, policy, eval_envs, obs_rms, env_noise_std, seed, device, num_eval_eps=10):
+def post_training_evaluation(policy, eval_envs, obs_rms, env_noise_std, seed, device, num_eval_eps=100):
     eval_env, eval_vec_norm = eval_envs
 
     if eval_vec_norm is not None:
@@ -30,9 +28,53 @@ def evaluate(evaluations, policy, eval_envs, obs_rms, env_noise_std, seed, devic
 
     state, info = eval_env.reset(seed=seed + 100)
 
-    eps_i = 0
-    eps_reward, eps_steps = 0, 0
-    eps_cost, eps_vel = 0, [[]] * num_eval_eps
+    eps_i, eps_vel = 0, []
+    velocities = []
+
+    while eps_i < num_eval_eps:
+        state = eval_vec_norm.normalize_obs(state)
+        state = torch.tensor(state).float().unsqueeze(dim=0).to(device)  # Needed because parallelized environments use state normalization
+
+        with torch.no_grad():
+            _, action, _, _ = policy.act(state, deterministic=True)
+
+            # Make the transitions stochastic by adding ~ N(0, 0.05) to actions
+            noise = torch.normal(0, env_noise_std, size=action.shape).to(action.device)
+            action += noise
+
+            action = action.cpu().data.numpy().squeeze()
+
+        # We only care about velocities
+        state, _, _, done, truncated, info = eval_env.step(action)
+
+        if 'y_velocity' not in info:
+            vel = np.abs(info['x_velocity'])
+        else:
+            vel = np.sqrt(info['x_velocity'] ** 2 + info['y_velocity'] ** 2)
+
+        eps_vel.append(vel)
+
+        if done or truncated:
+            state, _ = eval_env.reset(seed=seed + 100 + eps_i)
+            velocities.append(eps_vel)
+            eps_i += 1
+            eps_vel = []
+
+    return velocities
+
+
+def evaluate(evaluations, policy, eval_envs, obs_rms, env_noise_std, seed, device, num_eval_eps=10):
+    eval_env, eval_vec_norm = eval_envs
+
+    if eval_vec_norm is not None:
+        eval_vec_norm.eval()
+        eval_vec_norm.training = False
+        eval_vec_norm.norm_reward = False
+        eval_vec_norm.obs_rms = obs_rms
+
+    state, _ = eval_env.reset(seed=seed + 100)
+
+    eps_i, eps_reward, eps_steps, eps_cost = 0, 0, 0, 0
 
     while eps_i < num_eval_eps:
         state = eval_vec_norm.normalize_obs(state)
@@ -48,17 +90,11 @@ def evaluate(evaluations, policy, eval_envs, obs_rms, env_noise_std, seed, devic
             action = action.cpu().data.numpy().squeeze()
 
         # Added the cost for Safe RL
-        state, reward, cost, done, truncated, info = eval_env.step(action)
-
-        if 'y_velocity' not in info:
-            vel = np.abs(info['x_velocity'])
-        else:
-            vel = np.sqrt(info['x_velocity'] ** 2 + info['y_velocity'] ** 2)
+        state, reward, cost, done, truncated, _ = eval_env.step(action)
 
         eps_reward += reward
         eps_steps += 1
         eps_cost += cost
-        eps_vel[eps_i].append(vel)
 
         if done or truncated:
             state, _ = eval_env.reset(seed=seed + 100 + eps_i)
@@ -69,13 +105,6 @@ def evaluate(evaluations, policy, eval_envs, obs_rms, env_noise_std, seed, devic
 
     evaluations['reward'].append(mean_eval_reward)
     evaluations['cost'].append(mean_cost)
-
-    mean_vel = np.mean([np.mean(vels) for vels in eps_vel])
-    max_vel = np.mean([np.max(vels) for vels in eps_vel])
-
-    evaluations['velocity']['mean'].append(mean_vel)
-    evaluations['velocity']['max'].append(max_vel)
-    evaluations['time_steps'].append(eps_steps / num_eval_eps)
 
     print("--------------------------------------------------------")
     print(f"Evaluation over {num_eval_eps} episodes: Reward: {mean_eval_reward:.3f} - Cost: {mean_cost:.3f}")
